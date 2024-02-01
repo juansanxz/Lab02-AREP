@@ -1,15 +1,22 @@
 package edu.escuelaing.arem.ASE.app;
 
+import java.awt.*;
 import java.net.*;
 import java.io.*;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class HttpServer {
 
+    private static String currentQuery = null;
+
     public static void main(String[] args) throws IOException, URISyntaxException {
+
+        boolean isImage = false;
         ServerSocket serverSocket = null;
         try {
             serverSocket = new ServerSocket(35000);
@@ -51,16 +58,37 @@ public class HttpServer {
 
             URI fileUri = new URI(uriStr);
 
-            outputLine = httpError();
 
-            try{
-                outputLine = httpRequestFile(fileUri.getPath());
-            } catch(Exception e){
-                e.printStackTrace();
+            // If client is asking for a movie
+            if (uriStr.startsWith("/movie?t=")){
+                currentQuery = fileUri.getQuery();
+                outputLine = httpRequestTextFiles("/movieInfo.html");
+            } else if (uriStr.startsWith("/movieData")) {
+                // When client asks for the movie´s information to complete the table
+                outputLine = ExternalRestApiConnection.movieDataService(currentQuery);
+
+                if (outputLine == null) {
+                    outputLine = httpErrorNotFound();
+                }
+
+            } else if (uriStr.startsWith("/jpeg")){
+                // When client asks for an image
+                OutputStream outputForImage = clientSocket.getOutputStream();
+                httpRequestImage(fileUri.getPath(), outputForImage);
+                outputLine = null;
+
+            } else {
+                // When client asks for a text file
+                outputLine = httpErrorNotFound();
+
+                try{
+                    outputLine = httpRequestTextFiles(fileUri.getPath());
+                } catch(Exception e){
+                    e.printStackTrace();
+                }
             }
 
             out.println(outputLine);
-
             out.close();
             in.close();
             clientSocket.close();
@@ -68,37 +96,77 @@ public class HttpServer {
         serverSocket.close();
     }
 
-    private static String httpError() {
-        String outputLine = "HTTP/1.1 400 Not Found\r\n"
-                + "Content-Type:text/html\r\n"
-                + "\r\n"
-                + "<!DOCTYPE html>\n"
-                + "<html>\n"
-                + "    <head>\n"
-                + "        <title>Error Not found</title>\n"
-                + "        <meta charset=\"UTF-8\">\n"
-                + "        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
-                + "    </head>\n"
-                + "    <body>\n"
-                + "        <h1>Error</h1>\n"
-                + "    </body>\n";
-        return outputLine;
-
-    }
-
-    public static String httpRequestFile(String requestedFile) throws IOException {
-        String outputLine = "HTTP/1.1 200 OK\r\n"
+    /**
+     * When a file asked is not found
+     * @return outputLine to send
+     * @throws IOException
+     */
+    private static String httpErrorNotFound() throws IOException {
+        String outputLine = "HTTP/1.1 404 Not Found\r\n"
                 + "Content-Type:text/html\r\n"
                 + "\r\n";
         Charset charset = Charset.forName("UTF-8");
-        Path file = Paths.get("target/classes/public" + requestedFile);
+        Path file = Paths.get("target/classes/public/notFound.html");
         BufferedReader reader = Files.newBufferedReader(file, charset);
         String line = null;
         while ((line = reader.readLine()) != null) {
             System.out.println(line);
-            outputLine = outputLine + line;
+            outputLine = outputLine + line + "\r\n";;
+        }
+        return outputLine;
+
+    }
+
+    /**
+     * Looks for an image file and returns it
+     * @param requestedFile the image requested
+     * @param outputStream  the stream where the image is going to be sent
+     * @throws IOException
+     */
+    public static void httpRequestImage(String requestedFile, OutputStream outputStream) throws IOException {
+        Path file = Paths.get("target/classes/public" + requestedFile);
+        byte[] buffer = new byte[1024]; // Tamaño del buffer
+        try (InputStream inputStream = Files.newInputStream(file)) {
+            String header = "HTTP/1.1 200 OK\r\n" +
+                    "Content-Type:image/jpeg\r\n" +
+                    "Content-Length: " + Files.size(file) + "\r\n" +
+                    "\r\n";
+            outputStream.write(header.getBytes()); // Envía los encabezados
+            int bytesRead;
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead); // Escribir el buffer al OutputStream
+            }
+        }
+    }
+
+    /**
+     * Looks for the text file requested
+     * @param requestedFile the text file requested
+     * @return outputLine the String that shows what the client requested
+     * @throws IOException
+     */
+    public static String httpRequestTextFiles(String requestedFile) throws IOException {
+        Charset charset = Charset.forName("UTF-8");
+        Path file = Paths.get("target/classes/public" + requestedFile);
+        BufferedReader reader = Files.newBufferedReader(file, charset);
+        String line = null;
+        String outputLine = "HTTP/1.1 200 OK\r\n";
+        String extension = requestedFile.split("\\.")[1];
+
+        if (extension.equals("html")) {
+           outputLine = outputLine + "Content-Type:text/html; charset=utf-8\r\n";
+        } else if (extension.equals("js")) {
+            outputLine = outputLine + "Content-Type:application/javascript; charset=utf-8\r\n";
+        } else if (extension.equals(("css"))){
+            outputLine = outputLine + "Content-Type:text/css; charset=utf-8\r\n";
         }
 
+        outputLine = outputLine + "\r\n";
+
+        while ((line = reader.readLine()) != null) {
+            System.out.println(line);
+            outputLine = outputLine + line + "\r\n";;
+        }
 
         return outputLine;
 
